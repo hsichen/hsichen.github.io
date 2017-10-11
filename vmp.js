@@ -10568,18 +10568,13 @@ module.exports = Banner;
 /***/ (function(module, exports, __webpack_require__) {
 
 var $ = __webpack_require__(0);
-var InViewBanner = __webpack_require__(4);
-var MultiImageInPageBanner = __webpack_require__(5);
+var ScrollDecoratedInViewBanner = __webpack_require__(4);
+var MultiImageInPageBanner = __webpack_require__(6);
 
 top.doInView = function doInView(configs) {
-	var inviewBanner = new InViewBanner(configs);
-	inviewBanner.start();
+	var inviewBanner = new ScrollDecoratedInViewBanner(configs);
 
-	$('#bannerRefresh').click(
-		function() {
-			inviewBanner.refresh();
-		}
-	);
+	inviewBanner.start();
 };
 
 top.doInPage = function(configs){
@@ -10596,6 +10591,89 @@ top.doInPage = function(configs){
 
 /***/ }),
 /* 4 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var $ = __webpack_require__(0);
+var InViewBannerClass = __webpack_require__(5);
+
+var ScrollDecoratedInViewBanner = function(configs) {
+	if(!configs) {
+		throw new Error('configs are required');
+	}
+
+	// "super constructor" call
+	InViewBannerClass.call(this, configs);
+
+	var self = this;
+	this.scrollThreshold = configs.scroll_threshold || 100;
+	this.initialPositionFraction = configs.initial_position || 0.5;
+	this.endTopValue = this.endTopValue * this.initialPositionFraction;
+	this.scrollDelayMillis = configs.scroll_delay_millis || 500;
+	this.autocloseDelayMillis = configs.autoclose_delay_millis || 2000;
+
+	// attaching scrolling stuff
+	var regulatedTimerCallback = (function(originalCallback){
+		var tid;
+
+		return function() {
+			if(tid) {
+				top.clearTimeout(tid);	// reset timeout id
+			}
+			tid = top.setTimeout(originalCallback, self.scrollDelayMillis);
+		}
+	})(
+		function () {
+			self.show();	// leaving function wrapper in case of further development closured vars
+		}
+	);
+
+	$(top).scroll(regulatedTimerCallback);
+};
+
+ScrollDecoratedInViewBanner.prototype = Object.create(InViewBannerClass.prototype);
+ScrollDecoratedInViewBanner.prototype.constructor = ScrollDecoratedInViewBanner;
+
+ScrollDecoratedInViewBanner.prototype.show = function () {
+	if(this.isHidden) {
+		console.log("The banner is currently hidden");
+		return;
+	}
+
+	var targetPosition = this.getTargetTopPosition() || this.endTopValue;
+	console.debug("scrolled to position:", targetPosition, "starting position is:", this.endTopValue);
+
+    var self = this;
+	this.banner.show();
+	// uncomment this line below for un-animated testing / debugging 
+	// this.banner.css('top', targetPosition);
+	this.banner.animate({
+		'top': targetPosition
+	}, 'slow', function(){
+		self.openHandle.hide();
+
+		if(self.autocloseDelayMillis && Math.abs(targetPosition) >= self.banner.height()) {
+			top.setTimeout(self.hide.bind(self), self.autocloseDelayMillis);
+		}
+	});
+};
+
+ScrollDecoratedInViewBanner.prototype.getTargetTopPosition = function () {
+	var scrollTop = $(top).scrollTop();
+
+	if(scrollTop <= this.scrollThreshold) {
+		return this.endTopValue;
+	}
+
+	var p = scrollTop - this.scrollThreshold - this.endTopValue;
+	var max = (-1 * this.endTopValue) / this.initialPositionFraction;
+
+	return -1 * Math.min(p, max);
+}; 
+
+module.exports = ScrollDecoratedInViewBanner;
+
+/***/ }),
+/* 5 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var $ = __webpack_require__(0);
@@ -10621,14 +10699,15 @@ var InViewBanner = function (configs) {
 			'width': '100%',
 			'overflow': 'visible'
 		});
+	this.anchorContainer.append(banner);
 
 	// construct and modify the banner styles
 	this.endTopValue = -1 * (configs.height + 20);
-	this.banner.css({
+	banner.css({
 		'width': configs.width,
 		'height': configs.height + 20 + 'px',
 		'position': 'absolute',
-		'top': this.endTopValue + 'px',
+		'top': '0px',
 		'left': ($(top).width() - configs.width)/2 + 'px'
 	});
 	this.container.css({
@@ -10646,9 +10725,9 @@ var InViewBanner = function (configs) {
 		'right': '18px',
 		'top': '0px'
 	});
-	this.banner.append(this.closeIcon);
-	this.banner.append(this.infoIcon);	
-	this.banner.append(this.container);
+	banner.append(this.closeIcon);
+	banner.append(this.infoIcon);	
+	banner.append(this.container);
 	this.container.append($('<img/>')
 		.attr('width', configs.width)
 		.attr('height', configs.height)
@@ -10664,7 +10743,7 @@ var InViewBanner = function (configs) {
 	if(configs.scale) {
 		var scaleFactor = $(top).width() / configs.width;
 		
-		this.banner.css({
+		banner.css({
 			'width': configs.width * scaleFactor,
 			'height': configs.height * scaleFactor,
 			'left': '0px'
@@ -10673,6 +10752,36 @@ var InViewBanner = function (configs) {
 		this.endTopValue = -1 * (configs.height * scaleFactor + 20);
 	}
 
+	if(configs.reopenable) {
+		var self = this;
+		this.openHandle = $('<div></div>')
+			.attr('id', 'inviewOpenHandle')
+			.css({
+				'text-align': 'center',
+				'background-color': 'cyan',
+				'border': '1px solid gray',
+				'border-radius': '5px',
+				'width': configs.width,
+				'height': '40px',
+				'z-index' : 500,
+				'padding': 0,
+				'position': "absolute",
+				'top': "-40px",
+				'left': ($(top).width() - configs.width)/2 + 'px',
+				'cursor': 'pointer',
+				'overflow': 'hidden'
+			})
+			.click((function(){
+				return function() {
+					self.isHidden = false;
+					self.show();
+				}
+			})())
+			.html('Click to open InView Banner')
+			.hide();
+
+		this.anchorContainer.append(this.openHandle);
+	}
 
 	$(top.document.body).append(this.anchorContainer);
 };
@@ -10681,32 +10790,38 @@ InViewBanner.prototype = Object.create(BannerClass.prototype);
 InViewBanner.prototype.constructor = InViewBanner;
 
 InViewBanner.prototype.show = function () {
-	this.banner.css('top', '0px');
+    var handle = this.openHandle;
 	this.banner.animate({
 		'top': this.endTopValue
-	}, 'slow');
-}
+	}, 'slow', function(){
+		handle.hide();
+	});
+};
 
 InViewBanner.prototype.hide = function () {
+	var handle = this.openHandle;
 	this.banner.animate({
 		'top': '0px'
-	}, 'slow');
-}
+	}, 'slow', function(){
+  		handle.show();
+    });
+
+    this.isHidden = true;
+};
 
 InViewBanner.prototype.start = function () {
-	this.anchorContainer.append(this.banner);
 	this.show();	
 };
 
 module.exports = InViewBanner;
 
 /***/ }),
-/* 5 */
+/* 6 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var $ = __webpack_require__(0);
 var samples = __webpack_require__(1);
-var InPageBannerClass = __webpack_require__(6);
+var InPageBannerClass = __webpack_require__(7);
 
 // constants
 var INDICATOR_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAzBJREFUeNqkU11oFFcU/u6dmd0x+xOzZuMqrhuN+UFj9KHShz6UghVSKbQgKBgEFV8U9aVCUBQEBd+EKkos8UGwLS0pprUPdcE2STXxh+xGjImJa/520w1rNpv9ndmd2dszrm959MDH3HPnnO8759x72XAoDMskSYJB8Nhln09bOp43zPZZjfl1E4pPZUvr7OXnyzb3rWhJfmjkc+AMMIwS5PfZQqDIJGxSjGNyLnXzasIldeu1iNhcAONwpTXPXpFsOLMmub/NjT9GbWpHQdfTnFJZKDwCrQy0utjFZFa/sHt2IyZddfBtAL6pAeokIJgDBv+j6LiG6+4ITviN8dBy+QtN1+IYGBxEfGL064XxF2J9T0LgsRA/FcUKSxF2TlOpPSXR/ei1MKdGfn06HAbntOe1lc91znkw76jFw13AAQW4UgC8GaA6C7QTTKoyFADatsk4GluL17q6z1/F9yL2KvT5yPikwM9J0TFVUTuUJlYLZQL50IXwLglhFTZmkH+/KDr/mRXmzMsu7lWVQ4/TJClL+G4dECWlOxr1a7cmhIrRb2oOnWmghWYSqOXoXZZQ4LZdXOJsc9yaoswQoKQQlQsKRJFQ/kBgrfNAJFNx/Q6GWIm2SvBwvWRO+FWiX1zGW+r7U0uZpg5aQ//wNQiU3CoqBNPxDDYJDYrCFnk0W7jz2VobkEzgcjiFOiI46baiCPOEBUIEqCfFS3S0YSKNhuZwwCvglMQTHl3MPAqsMgdOtbrx24M3+DMl8H09cHsj0Ehlr6d2DjuBiW0V9X3352A3C9i/1YU384u9+CsYxIuhgT3JTEpsv/ZM4Pyg6IrpK+7BvClEwy/TAqeD4t5kQqRjEz8GHwTB+vv7kStoaPbVnPXUN13+tncGf4cTqGqqQ3uLBx5Vwr+xLMZCcdiUMno6tmKPMzc8NPb2S8WuJllfX9/748rmCtjsrT7Y0tzY9ftsyXFj5B36Enm65mVscdjR0bgax3fUwJlP3B0anzmiqKuKiiyjQkBmWg+qZEDlqPmkYcMxm9v9Vc5kAeJWuMSSDkN7NhqJ/jCXyg5Vu5xg9MgkiYNZF+1j7H8BBgBpyaYfXtj5QgAAAABJRU5ErkJggg==";
@@ -10833,7 +10948,7 @@ MultiImageInPageBanner.prototype.handleScroll = function() {
 module.exports = MultiImageInPageBanner;
 
 /***/ }),
-/* 6 */
+/* 7 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var $ = __webpack_require__(0);
